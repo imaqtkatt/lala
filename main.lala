@@ -1,0 +1,9 @@
+fn test({0}) -> 1
+fn test({0, 3}) -> 2
+fn test(#ping) -> #pong
+fn test("ping") -> "pong"
+fn test(x) ->
+  case x of
+    #secret -> 42;
+    _ -> #error
+  end
