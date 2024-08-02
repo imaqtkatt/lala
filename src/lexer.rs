@@ -23,6 +23,9 @@ pub enum TokenKind {
   Case,
   Of,
   End,
+  If,
+  Then,
+  Else,
   Comma,
   Semicolon,
   Period,
@@ -87,6 +90,9 @@ impl<'input> Lexer<'input> {
       "case" => TokenKind::Case,
       "of" => TokenKind::Of,
       "end" => TokenKind::End,
+      "if" => TokenKind::If,
+      "then" => TokenKind::Then,
+      "else" => TokenKind::Else,
       _ => TokenKind::Identifier,
     }
   }

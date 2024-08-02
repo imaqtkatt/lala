@@ -40,6 +40,11 @@ pub enum Expression {
     callee: Expr,
     arguments: Vec<Expression>,
   },
+  If {
+    condition: Expr,
+    then_branch: Expr,
+    else_branch: Expr,
+  },
   Access {
     expr: Expr,
     idx: usize,
@@ -50,12 +55,11 @@ pub enum Expression {
 pub enum Tree {
   Failure,
   Leaf(usize),
-  Switch(Box<Occurrence>, Vec<(Case, Tree)>, Box<Tree>),
+  Switch(Box<Occurrence>, Vec<(Cond, Tree)>, Box<Tree>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Case {
-  // Variable(String),
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Cond {
   Number(i32),
   String(String),
   Atom(String),
@@ -65,6 +69,18 @@ pub enum Case {
 #[derive(Clone, Debug)]
 pub struct Occurrence(pub Expression, pub Vec<usize>);
 
+impl Occurrence {
+  pub fn to_expression(self) -> Expression {
+    self
+      .1
+      .into_iter()
+      .fold(self.0, |acc, nxt| Expression::Access {
+        expr: Box::new(acc),
+        idx: nxt,
+      })
+  }
+}
+
 pub type Expr = Box<Expression>;
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +89,7 @@ pub enum Operation {
   Sub,
   Mul,
   Div,
+  Equal,
 }
 
 #[derive(Debug)]

@@ -8,7 +8,7 @@ use super::FnDefinition;
 impl ast::FnDefinition {
   pub fn desugar(self) -> Result<FnDefinition, String> {
     fn gen_name(gen: usize) -> String {
-      format!("a_{gen}")
+      format!("x_{gen}")
     }
 
     let mut patterns: Vec<Vec<_>> = vec![];
@@ -17,6 +17,7 @@ impl ast::FnDefinition {
       patterns.push(clause.patterns.into_iter().map(|p| p.desugar()).collect());
       actions.push(clause.body.desugar());
     }
+    // println!("patterns = {patterns:?}");
     let arity = (&patterns[0]).len();
     for pat in patterns.iter() {
       let curr_arity = pat.len();
@@ -30,16 +31,12 @@ impl ast::FnDefinition {
 
     let parameters: Vec<String> = (0..arity).map(gen_name).collect();
 
-    let scrutinee = parameters
-      .iter()
-      .map(|name| Expression::Variable { name: name.clone() })
-      .collect();
-    let body = pattern::compile_match(scrutinee, patterns, actions);
+    let (tree, actions) = pattern::Problem::with_parameters(parameters.clone(), patterns, actions);
 
     Ok(FnDefinition {
       name: self.name,
       parameters,
-      body: Box::new(body),
+      body: Box::new(Expression::Match { tree, actions }),
     })
   }
 }

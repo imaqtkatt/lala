@@ -1,9 +1,39 @@
-fn test({0}) -> 1
-fn test({0, 3}) -> 2
-fn test(#ping) -> #pong
-fn test("ping") -> "pong"
-fn test(x) ->
-  case x of
-    #secret -> 42;
+fn cons(head, tail) -> {#cons, head, tail}
+
+fn newEnv() -> #nil
+
+fn fetch(#nil, _) -> #none
+fn fetch({#cons, {k, v}, tail}, kk) ->
+  if k == kk
+  then {#some, v}
+  else fetch(tail, kk)
+
+fn eval({#var, name}, env) ->
+  case fetch(env, name) of
+    {#some, v} -> v;
     _ -> #error
   end
+fn eval({#let, bind, val, next}, env) ->
+  let newEnv = cons({bind, eval(val, env)},env)
+   in eval(next, newEnv)
+fn eval({#add, x, y}, env) -> evalAdd(eval(x, env), eval(y, env))
+fn eval({#number, x}, _) -> {#number, x}
+fn eval(_, _) -> #error
+
+fn evalAdd({#number, x}, {#number, y}) -> {#number, x + y}
+fn evalAdd(_, _) -> #error
+
+fn program() ->
+  {#let,
+    "x",
+    {#number, 2},
+    {#add,
+      {#var, "x"},
+      {#number, 3}}}
+fn program2() ->
+  {#let,
+    "x",
+    {#number, 2},
+    {#var, "x"}}
+
+fn test() -> eval(program(), newEnv())

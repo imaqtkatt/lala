@@ -18,7 +18,7 @@ pub enum Expression {
     next: Expr,
   },
   Match {
-    scrutinee: Expr,
+    scrutinee: Vec<Expression>,
     arms: Vec<Arm>,
   },
   Tuple {
@@ -33,6 +33,11 @@ pub enum Expression {
     callee: Expr,
     arguments: Vec<Expression>,
   },
+  If {
+    condition: Expr,
+    then_branch: Expr,
+    else_branch: Expr,
+  },
 }
 
 #[derive(Debug)]
@@ -41,11 +46,12 @@ pub enum Operation {
   Sub,
   Mul,
   Div,
+  Equal,
 }
 
 #[derive(Debug)]
 pub struct Arm {
-  pub lhs: Pattern,
+  pub lhs: Vec<Pattern>,
   pub rhs: Expr,
 }
 

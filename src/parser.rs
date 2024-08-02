@@ -10,6 +10,7 @@ pub struct Parser<'input> {
 }
 
 const PREC: &[&[TokenKind]] = &[
+  &[TokenKind::DoubleEquals],
   &[TokenKind::Plus, TokenKind::Minus],
   &[TokenKind::Star, TokenKind::Slash],
 ];
@@ -105,8 +106,23 @@ impl<'input> Parser<'input> {
     match self.kind() {
       TokenKind::Let => self.let_expression(),
       TokenKind::Case => self.match_case_expression(),
+      TokenKind::If => self.if_expression(),
       _ => self.infix(0),
     }
+  }
+
+  fn if_expression(&mut self) -> Result<Expression, String> {
+    self.expect(TokenKind::If)?;
+    let condition = self.expression()?;
+    self.expect(TokenKind::Then)?;
+    let then_branch = self.expression()?;
+    self.expect(TokenKind::Else)?;
+    let else_branch = self.expression()?;
+    Ok(Expression::If {
+      condition: Box::new(condition),
+      then_branch: Box::new(then_branch),
+      else_branch: Box::new(else_branch),
+    })
   }
 
   fn infix(&mut self, prec: usize) -> Result<Expression, String> {
@@ -136,6 +152,7 @@ impl<'input> Parser<'input> {
       TokenKind::Minus => Ok(Operation::Sub),
       TokenKind::Star => Ok(Operation::Mul),
       TokenKind::Slash => Ok(Operation::Div),
+      TokenKind::DoubleEquals => Ok(Operation::Equal),
       _ => Err(format!("Expected operator, got {:?}", token.lexeme)),
     }
   }
@@ -178,7 +195,11 @@ impl<'input> Parser<'input> {
 
   fn match_case_expression(&mut self) -> Result<Expression, String> {
     self.expect(TokenKind::Case)?;
-    let scrutinee = self.expression()?;
+    let mut scrutinee = vec![self.expression()?];
+    while self.is(TokenKind::Comma) {
+      self.eat();
+      scrutinee.push(self.expression()?);
+    }
     self.expect(TokenKind::Of)?;
 
     let mut arms = vec![self.arm()?];
@@ -188,14 +209,16 @@ impl<'input> Parser<'input> {
     }
     self.expect(TokenKind::End)?;
 
-    Ok(Expression::Match {
-      scrutinee: Box::new(scrutinee),
-      arms,
-    })
+    Ok(Expression::Match { scrutinee, arms })
   }
 
   fn arm(&mut self) -> Result<Arm, String> {
-    let lhs = self.pattern()?;
+    let mut lhs = vec![self.pattern()?];
+    while self.is(TokenKind::Comma) {
+      self.eat();
+      lhs.push(self.pattern()?);
+    }
+
     self.expect(TokenKind::Arrow)?;
     let rhs = self.expression()?;
     Ok(Arm {
