@@ -5,7 +5,16 @@ use crate::desugar::{self, Cond, Expression as Desugar, Operation, Tree};
 #[derive(Clone)]
 pub struct Env {
   fn_definitions: BTreeMap<String, desugar::FnDefinition>,
-  variables: HashMap<String, desugar::Expression>,
+  variables: HashMap<String, Value>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Value {
+  Number(i32),
+  String(String),
+  Atom(String),
+  Tuple(Vec<Value>),
+  Function(Vec<String>, desugar::Expr),
 }
 
 impl Env {
@@ -16,20 +25,24 @@ impl Env {
     }
   }
 
-  fn fetch(&self, name: &str) -> Result<desugar::Expression, String> {
-    self
-      .variables
-      .get(name)
-      .cloned()
-      .ok_or(format!("Unbound variable {name}"))
+  fn fetch(&self, name: &str) -> Result<Value, String> {
+    if let Some(value) = self.variables.get(name).cloned() {
+      return Ok(value);
+    } else {
+      self
+        .fn_definitions
+        .get(name)
+        .map(|f| Value::Function(f.parameters.clone(), f.body.clone()))
+        .ok_or(format!("Unbound variable {name}"))
+    }
   }
 
-  pub fn eval(&mut self, expr: desugar::Expression) -> Result<desugar::Expression, String> {
+  pub fn eval(&mut self, expr: desugar::Expression) -> Result<Value, String> {
     match expr {
       Desugar::Variable { name } => self.fetch(&name),
-      Desugar::Number { .. } => Ok(expr),
-      Desugar::Atom { value } => Ok(Desugar::Atom { value }),
-      Desugar::String { value } => Ok(Desugar::String { value }),
+      Desugar::Number { value } => Ok(Value::Number(value)),
+      Desugar::Atom { value } => Ok(Value::Atom(value)),
+      Desugar::String { value } => Ok(Value::String(value)),
       Desugar::Let { bind, value, next } => {
         let mut new_env = self.clone();
         new_env.variables.insert(bind, self.eval(*value)?);
@@ -40,54 +53,32 @@ impl Env {
         let body = actions[idx].clone();
         self.eval(body)
       }
-      Desugar::Tuple { elements } => Ok(Desugar::Tuple {
-        elements: elements.into_iter().flat_map(|e| self.eval(e)).collect(),
-      }),
+      Desugar::Tuple { elements } => Ok(Value::Tuple(
+        elements.into_iter().flat_map(|e| self.eval(e)).collect(),
+      )),
       Desugar::Binary { op, lhs, rhs } => match (op, self.eval(*lhs)?, self.eval(*rhs)?) {
-        (Operation::Add, Desugar::Number { value: a }, Desugar::Number { value: b }) => {
-          Ok(Desugar::Number { value: a + b })
-        }
-        (Operation::Sub, Desugar::Number { value: a }, Desugar::Number { value: b }) => {
-          Ok(Desugar::Number { value: a - b })
-        }
-        (Operation::Mul, Desugar::Number { value: a }, Desugar::Number { value: b }) => {
-          Ok(Desugar::Number { value: a * b })
-        }
-        (Operation::Div, Desugar::Number { value: a }, Desugar::Number { value: b }) => {
-          Ok(Desugar::Number { value: a / b })
-        }
-        (Operation::Equal, x, y) => {
-          if equality(x, y) {
-            Ok(Desugar::Atom {
-              value: "true".to_string(),
-            })
-          } else {
-            Ok(Desugar::Atom {
-              value: "false".to_string(),
-            })
-          }
-        }
+        (Operation::Add, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+        (Operation::Sub, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+        (Operation::Mul, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+        (Operation::Div, Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
+        (Operation::Equal, ref x, ref y) if equality(x, y) => Ok(Value::Atom("true".to_string())),
+        (Operation::Equal, _, _) => Ok(Value::Atom("false".to_string())),
         _ => Err(format!("Invalid binary operation.")),
       },
-      Desugar::Call { callee, arguments } => {
-        let Desugar::Variable { name } = *callee else {
-          return Err("Callee must be a variable name".to_string());
-        };
-        match self.fn_definitions.get(&name).cloned() {
-          Some(def) => {
-            let mut new_env = self.clone();
-            for (x, y) in def.parameters.into_iter().zip(arguments) {
-              new_env.variables.insert(x, self.eval(y)?);
-            }
-            new_env.eval(*def.body)
+      Desugar::Call { callee, arguments } => match self.eval(*callee)? {
+        Value::Function(parameters, body) => {
+          let mut new_env = self.clone();
+          for (x, y) in parameters.into_iter().zip(arguments) {
+            new_env.variables.insert(x, self.eval(y)?);
           }
-          None => Err(format!("Unbound function definition {name}")),
+          new_env.eval(*body)
         }
-      }
+        _ => Err(format!("Expected call to a function definition")),
+      },
       Desugar::Access { expr, idx } => match self.eval(*expr)? {
-        Desugar::Tuple { elements } => {
-          if let Some(item) = elements.get(idx) {
-            self.eval(item.clone())
+        Value::Tuple(elements) => {
+          if let Some(item) = elements.get(idx).cloned() {
+            Ok(item)
           } else {
             Err(format!("Index {} out of bounds", idx))
           }
@@ -99,19 +90,19 @@ impl Env {
         then_branch,
         else_branch,
       } => match self.eval(*condition)? {
-        Desugar::Atom { ref value } if value == "true" => self.eval(*then_branch),
+        Value::Atom(ref value) if value == "true" => self.eval(*then_branch),
         _ => self.eval(*else_branch),
       },
     }
   }
 }
 
-fn equality(x: Desugar, y: Desugar) -> bool {
+fn equality(x: &Value, y: &Value) -> bool {
   match (x, y) {
-    (Desugar::Number { value: a }, Desugar::Number { value: b }) if a == b => true,
-    (Desugar::String { value: a }, Desugar::String { value: b }) if a == b => true,
-    (Desugar::Atom { value: a }, Desugar::Atom { value: b }) if a == b => true,
-    (Desugar::Tuple { elements: a }, Desugar::Tuple { elements: b }) if a.len() == b.len() => a
+    (Value::Number(a), Value::Number(b)) if a == b => true,
+    (Value::String(a), Value::String(b)) if a == b => true,
+    (Value::Atom(a), Value::Atom(b)) if a == b => true,
+    (Value::Tuple(a), Value::Tuple(b)) if a.len() == b.len() => a
       .into_iter()
       .zip(b.into_iter())
       .all(|(x, y)| equality(x, y)),
@@ -128,10 +119,10 @@ impl Tree {
         let expr = env.eval(occ.clone().to_expression())?;
         for (case, branch) in branches {
           let res = match (case, &expr) {
-            (Cond::Number(a), Desugar::Number { value: b }) if a == b => branch.eval(env),
-            (Cond::String(a), Desugar::String { value: b }) if a == b => branch.eval(env),
-            (Cond::Atom(a), Desugar::Atom { value: b }) if a == b => branch.eval(env),
-            (Cond::Tuple(a), Desugar::Tuple { elements: b }) if *a == b.len() => branch.eval(env),
+            (Cond::Number(a), Value::Number(b)) if a == b => branch.eval(env),
+            (Cond::String(a), Value::String(b)) if a == b => branch.eval(env),
+            (Cond::Atom(a), Value::Atom(b)) if a == b => branch.eval(env),
+            (Cond::Tuple(a), Value::Tuple(b)) if *a == b.len() => branch.eval(env),
             _ => continue,
           };
           match res {
