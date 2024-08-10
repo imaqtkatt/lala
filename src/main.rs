@@ -10,6 +10,8 @@ pub mod eval;
 pub mod lexer;
 pub mod parser;
 
+use desugar::Desugar;
+
 fn main() -> std::io::Result<()> {
   let mut args = std::env::args();
   if let Some(file_path) = args.nth(1) {
@@ -25,7 +27,11 @@ fn main() -> std::io::Result<()> {
       let _ = std::io::stdin().read_line(&mut buf)?;
       let mut parser = Parser::new(Lexer::new(&buf));
       let expr = parser.expression().map_err(std::io::Error::other)?;
-      let res = env.eval(expr.desugar());
+      let res = env.eval(
+        expr
+          .desugar()
+          .map_err(|_| std::io::Error::other("Desugar expr"))?,
+      );
       println!("{res:?}");
     }
   } else {

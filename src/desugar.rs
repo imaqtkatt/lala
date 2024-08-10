@@ -130,3 +130,10 @@ pub struct FnDefinition {
 pub struct Program {
   pub definitions: BTreeMap<String, FnDefinition>,
 }
+
+pub trait Desugar {
+  type Out;
+  type Err;
+
+  fn desugar(self) -> Result<Self::Out, Self::Err>;
+}

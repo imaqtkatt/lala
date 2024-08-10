@@ -307,9 +307,9 @@ impl<'input> Parser<'input> {
 
 #[cfg(test)]
 mod test {
-  use crate::lexer::Lexer;
-
   use super::Parser;
+  use crate::desugar::Desugar;
+  use crate::lexer::Lexer;
 
   #[test]
   fn parser_test() {
