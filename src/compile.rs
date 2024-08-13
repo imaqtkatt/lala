@@ -1,8 +1,6 @@
-use std::{
-  cell::RefCell,
-  collections::{BTreeMap, HashMap},
-  hash::Hash,
-};
+use std::{cell::RefCell, collections::HashMap};
+
+use indexmap::IndexMap;
 
 use crate::desugar::{self, Cond, Expression, Occurrence};
 
@@ -62,7 +60,7 @@ pub enum Constant {
 #[derive(Default)]
 pub struct Ctx {
   bytecode: Vec<Bytecode>,
-  constants: BTreeMap<Constant, u16>,
+  constants: IndexMap<Constant, u16>,
   locals: HashMap<String, usize>,
   jumps: Vec<usize>,
 }
@@ -71,9 +69,9 @@ const TEMP_BRANCH: usize = 0;
 
 #[derive(Debug)]
 pub struct BytecodeInfo {
-  bytecode: Vec<Bytecode>,
-  locals: usize,
-  constants: BTreeMap<Constant, u16>,
+  pub bytecode: Vec<Bytecode>,
+  pub locals: usize,
+  pub constants: IndexMap<Constant, u16>,
 }
 
 impl Ctx {
@@ -102,14 +100,6 @@ impl Ctx {
 
   pub fn fn_clause(&mut self, expression: Expression) {
     self.compile_expr(expression);
-    let loc = self.bytecode.len();
-    let mut jumps = std::mem::take(&mut self.jumps).into_iter();
-    while let Some(idx) = jumps.next() {
-      let Bytecode::Jump { index } = &mut self.bytecode[idx] else {
-        unreachable!()
-      };
-      *index = loc;
-    }
     self.push(Bytecode::Return);
   }
 
@@ -134,8 +124,8 @@ impl Ctx {
     let id = self.constants.len();
     assert!(id < u16::MAX as usize);
     match self.constants.entry(constant) {
-      std::collections::btree_map::Entry::Occupied(o) => *o.get(),
-      std::collections::btree_map::Entry::Vacant(v) => *v.insert(id as u16),
+      indexmap::map::Entry::Occupied(o) => *o.get(),
+      indexmap::map::Entry::Vacant(v) => *v.insert(id as u16),
     }
   }
 
@@ -173,6 +163,51 @@ impl Ctx {
     }
   }
 
+  fn compile_case_tree(&mut self, tree: desugar::Tree, actions: Vec<Expression>) {
+    match tree {
+      desugar::Tree::Failure => {
+        self.push(Bytecode::MatchFail);
+      }
+      desugar::Tree::Leaf(index) => {
+        self.compile_expr(actions[index].clone());
+        let idx = self.push(Bytecode::Jump { index: TEMP_BRANCH });
+        self.jumps.push(idx);
+      }
+      desugar::Tree::Switch(occ, branches, default) => {
+        let mut branches = branches.into_iter().peekable();
+        while let Some((cond, tree)) = branches.next() {
+          self.compile_occ(*occ.clone());
+          let cond_location = self.compile_cond(cond);
+          self.compile_case_tree(tree, actions.clone());
+          if let Some(_) = branches.peek() {
+            let len = self.bytecode.len();
+            match &mut self.bytecode[cond_location] {
+              Bytecode::TestAtom { branch, .. }
+              | Bytecode::TestString { branch, .. }
+              | Bytecode::TestNumber { branch, .. }
+              | Bytecode::TestTuple { branch, .. } => {
+                *branch = len;
+              }
+              _ => unreachable!(),
+            }
+          } else {
+            let len = self.bytecode.len();
+            self.compile_case_tree(*default.clone(), actions.clone());
+            match &mut self.bytecode[cond_location] {
+              Bytecode::TestAtom { branch, .. }
+              | Bytecode::TestString { branch, .. }
+              | Bytecode::TestNumber { branch, .. }
+              | Bytecode::TestTuple { branch, .. } => {
+                *branch = len;
+              }
+              _ => unreachable!(),
+            }
+          }
+        }
+      }
+    }
+  }
+
   pub fn compile_expr(&mut self, expression: Expression) {
     match expression {
       Expression::Variable { ref name } => {
@@ -196,54 +231,16 @@ impl Ctx {
         self.push(Bytecode::SetLocal { id });
         self.compile_expr(*next);
       }
-      Expression::Match { tree, actions } => match tree {
-        crate::desugar::Tree::Failure => {
-          self.push(Bytecode::MatchFail);
+      Expression::Match { tree, actions } => {
+        self.compile_case_tree(tree, actions);
+        let next_bytecode = self.bytecode.len();
+        for idx in std::mem::take(&mut self.jumps) {
+          let Bytecode::Jump { index } = &mut self.bytecode[idx] else {
+            unreachable!()
+          };
+          *index = next_bytecode;
         }
-        crate::desugar::Tree::Leaf(action_idx) => {
-          self.compile_expr(actions[action_idx].clone());
-          let idx = self.push(Bytecode::Jump { index: TEMP_BRANCH });
-          self.jumps.push(idx);
-        }
-        crate::desugar::Tree::Switch(occ, branches, default) => {
-          let mut branches = branches.into_iter().peekable();
-          while let Some((cond, tree)) = branches.next() {
-            self.compile_occ(*occ.clone());
-            let cond_location = self.compile_cond(cond);
-            self.compile_expr(Expression::Match {
-              tree,
-              actions: actions.clone(),
-            });
-            if let Some(_) = branches.peek() {
-              let len = self.bytecode.len();
-              match &mut self.bytecode[cond_location] {
-                Bytecode::TestAtom { branch, .. }
-                | Bytecode::TestString { branch, .. }
-                | Bytecode::TestNumber { branch, .. }
-                | Bytecode::TestTuple { branch, .. } => {
-                  *branch = len;
-                }
-                _ => unreachable!(),
-              }
-            } else {
-              let len = self.bytecode.len();
-              self.compile_expr(Expression::Match {
-                tree: *default.clone(),
-                actions: actions.clone(),
-              });
-              match &mut self.bytecode[cond_location] {
-                Bytecode::TestAtom { branch, .. }
-                | Bytecode::TestString { branch, .. }
-                | Bytecode::TestNumber { branch, .. }
-                | Bytecode::TestTuple { branch, .. } => {
-                  *branch = len;
-                }
-                _ => unreachable!(),
-              }
-            }
-          }
-        }
-      },
+      }
       Expression::Tuple { elements } => {
         let size = elements.len();
         for element in elements.into_iter() {
@@ -251,8 +248,15 @@ impl Ctx {
         }
         self.push(Bytecode::MakeTuple { size });
       }
-      Expression::Binary { op, lhs, rhs } => todo!(),
-      Expression::Call { callee, arguments } => todo!(),
+      Expression::Binary {
+        op: _,
+        lhs: _,
+        rhs: _,
+      } => todo!(),
+      Expression::Call {
+        callee: _,
+        arguments: _,
+      } => todo!(),
       Expression::If {
         condition,
         then_branch,
@@ -397,11 +401,17 @@ mod test {
   fn test_compile() {
     let src = r#"
 let x = {1, "what"} in
-case x of
-  {1, 1} -> 42;
-  {1, x} -> x;
-  "oi" -> "tchau";
-  _ -> 69
+let res =
+  case x of
+    {1, 1} -> 42;
+    {1, x} -> x;
+    "oi" -> "tchau";
+    _ -> 69
+  end
+in
+case res of
+  "what" -> 1;
+  _ -> 0
 end
 "#;
     let mut parser = Parser::new(Lexer::new(src));
