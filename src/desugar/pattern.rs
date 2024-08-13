@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use crate::{
   ast::{self},
@@ -246,8 +246,8 @@ impl Problem {
     self.matrix[0].0[0].occurrence.clone()
   }
 
-  pub fn head_conds(&self) -> HashSet<Cond> {
-    let mut conds = HashSet::new();
+  pub fn head_conds(&self) -> BTreeSet<Cond> {
+    let mut conds = BTreeSet::new();
 
     for row in &self.matrix {
       if let Some(cond) = row.head_cond() {

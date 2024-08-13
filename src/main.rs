@@ -5,6 +5,7 @@ use lexer::Lexer;
 use parser::Parser;
 
 pub mod ast;
+pub mod compile;
 pub mod desugar;
 pub mod eval;
 pub mod lexer;
