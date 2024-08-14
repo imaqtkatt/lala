@@ -87,6 +87,8 @@ impl Case {
           .collect(),
       ),
       (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Number(_)) => Some(VecDeque::new()),
+      (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Atom(_)) => Some(VecDeque::new()),
+      (Pattern::Variable { .. } | Pattern::Wildcard, Cond::String(_)) => Some(VecDeque::new()),
       (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Tuple(b)) => {
         Some((0..b).map(|_| Case::wildcard(&self.occurrence)).collect())
       }

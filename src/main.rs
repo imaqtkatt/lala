@@ -14,6 +14,17 @@ pub mod parser;
 use desugar::Desugar;
 
 fn main() -> std::io::Result<()> {
+  // let lay = std::alloc::Layout::array::<u64>(2).unwrap();
+  // let m = unsafe { std::alloc::alloc(lay) as *mut u64 };
+  // unsafe { *m.offset(0) = 42 };
+  // unsafe { *m.offset(1) = 43 };
+
+  // println!("{m:?}");
+  // println!("{:?}", unsafe { *m.offset(0) });
+
+  // unsafe { std::alloc::dealloc(m as *mut u8, lay) };
+  // Ok(())
+
   let mut args = std::env::args();
   if let Some(file_path) = args.nth(1) {
     let mut file = File::open(file_path)?;

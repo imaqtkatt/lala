@@ -19,17 +19,7 @@ pub enum Bytecode {
   SetLocal {
     id: usize,
   },
-  TestNumber {
-    val: i32,
-    /// Branch to next or default case.
-    branch: usize,
-  },
-  TestAtom {
-    id: u16,
-    /// Branch to next or default case.
-    branch: usize,
-  },
-  TestString {
+  TestExact {
     id: u16,
     /// Branch to next or default case.
     branch: usize,
@@ -53,6 +43,7 @@ pub enum Bytecode {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Constant {
+  Number(i32),
   Atom(String),
   String(String),
 }
@@ -62,7 +53,6 @@ pub struct Ctx {
   bytecode: Vec<Bytecode>,
   constants: IndexMap<Constant, u16>,
   locals: HashMap<String, usize>,
-  jumps: Vec<usize>,
 }
 
 const TEMP_BRANCH: usize = 0;
@@ -138,20 +128,23 @@ impl Ctx {
 
   pub fn compile_cond(&mut self, cond: Cond) -> usize {
     match cond {
-      Cond::Number(n) => self.push(Bytecode::TestNumber {
-        val: n,
-        branch: TEMP_BRANCH,
-      }),
+      Cond::Number(n) => {
+        let id = self.make_constant(Constant::Number(n));
+        self.push(Bytecode::TestExact {
+          id,
+          branch: TEMP_BRANCH,
+        })
+      }
       Cond::String(s) => {
         let id = self.make_constant(Constant::String(s));
-        self.push(Bytecode::TestString {
+        self.push(Bytecode::TestExact {
           id,
           branch: TEMP_BRANCH,
         })
       }
       Cond::Atom(a) => {
         let id = self.make_constant(Constant::Atom(a));
-        self.push(Bytecode::TestAtom {
+        self.push(Bytecode::TestExact {
           id,
           branch: TEMP_BRANCH,
         })
@@ -163,7 +156,12 @@ impl Ctx {
     }
   }
 
-  fn compile_case_tree(&mut self, tree: desugar::Tree, actions: Vec<Expression>) {
+  fn compile_case_tree(
+    &mut self,
+    tree: desugar::Tree,
+    actions: Vec<Expression>,
+    jumps: &mut Vec<usize>,
+  ) {
     match tree {
       desugar::Tree::Failure => {
         self.push(Bytecode::MatchFail);
@@ -171,33 +169,27 @@ impl Ctx {
       desugar::Tree::Leaf(index) => {
         self.compile_expr(actions[index].clone());
         let idx = self.push(Bytecode::Jump { index: TEMP_BRANCH });
-        self.jumps.push(idx);
+        jumps.push(idx);
       }
       desugar::Tree::Switch(occ, branches, default) => {
         let mut branches = branches.into_iter().peekable();
         while let Some((cond, tree)) = branches.next() {
           self.compile_occ(*occ.clone());
           let cond_location = self.compile_cond(cond);
-          self.compile_case_tree(tree, actions.clone());
+          self.compile_case_tree(tree, actions.clone(), jumps);
           if let Some(_) = branches.peek() {
             let len = self.bytecode.len();
             match &mut self.bytecode[cond_location] {
-              Bytecode::TestAtom { branch, .. }
-              | Bytecode::TestString { branch, .. }
-              | Bytecode::TestNumber { branch, .. }
-              | Bytecode::TestTuple { branch, .. } => {
+              Bytecode::TestExact { branch, .. } | Bytecode::TestTuple { branch, .. } => {
                 *branch = len;
               }
               _ => unreachable!(),
             }
           } else {
             let len = self.bytecode.len();
-            self.compile_case_tree(*default.clone(), actions.clone());
+            self.compile_case_tree(*default.clone(), actions.clone(), jumps);
             match &mut self.bytecode[cond_location] {
-              Bytecode::TestAtom { branch, .. }
-              | Bytecode::TestString { branch, .. }
-              | Bytecode::TestNumber { branch, .. }
-              | Bytecode::TestTuple { branch, .. } => {
+              Bytecode::TestExact { branch, .. } | Bytecode::TestTuple { branch, .. } => {
                 *branch = len;
               }
               _ => unreachable!(),
@@ -232,9 +224,10 @@ impl Ctx {
         self.compile_expr(*next);
       }
       Expression::Match { tree, actions } => {
-        self.compile_case_tree(tree, actions);
+        let mut jumps = Vec::new();
+        self.compile_case_tree(tree, actions, &mut jumps);
         let next_bytecode = self.bytecode.len();
-        for idx in std::mem::take(&mut self.jumps) {
+        for idx in jumps {
           let Bytecode::Jump { index } = &mut self.bytecode[idx] else {
             unreachable!()
           };
@@ -266,11 +259,11 @@ impl Ctx {
 
         let id = self.make_constant(Constant::Atom("true".to_string()));
         self.push(Bytecode::LoadConstant { id });
-        let branch = self.push(Bytecode::TestAtom { id, branch: 0 });
+        let branch = self.push(Bytecode::TestExact { id, branch: 0 });
 
         self.compile_expr(*else_branch);
         let len = self.bytecode.len();
-        let Bytecode::TestAtom { branch, .. } = &mut self.bytecode[branch] else {
+        let Bytecode::TestExact { branch, .. } = &mut self.bytecode[branch] else {
           unreachable!()
         };
         *branch = len;
@@ -316,6 +309,7 @@ impl<'a> Machine<'a> {
   fn load_constant(&self, id: u16) -> Value {
     let c = self.constants[id as usize].clone();
     match c {
+      Constant::Number(n) => Value::Number(n),
       Constant::Atom(a) => Value::Atom(a),
       Constant::String(s) => Value::String(s),
     }
@@ -342,18 +336,10 @@ impl<'a> Machine<'a> {
           let a = stack.pop().unwrap();
           locals[*id] = a;
         }
-        Bytecode::TestNumber { val, branch } => match (stack.pop().unwrap(), *val) {
-          (Value::Number(n), m) if n == m => {}
-          _ => *self.ip.borrow_mut() = *branch,
-        },
-        Bytecode::TestAtom { id, branch } => {
+        Bytecode::TestExact { id, branch } => {
           match (stack.pop().unwrap(), self.load_constant(*id)) {
+            (Value::Number(a), Value::Number(b)) if a == b => {}
             (Value::Atom(ref a), Value::Atom(ref b)) if a == b => {}
-            _ => *self.ip.borrow_mut() = *branch,
-          }
-        }
-        Bytecode::TestString { id, branch } => {
-          match (stack.pop().unwrap(), self.load_constant(*id)) {
             (Value::String(ref a), Value::String(ref b)) if a == b => {}
             _ => *self.ip.borrow_mut() = *branch,
           }
@@ -375,10 +361,8 @@ impl<'a> Machine<'a> {
           };
           stack.push(t[*index].clone());
         }
-        Bytecode::Jump { index } => {
-          *self.ip.borrow_mut() = *index;
-        }
-        Bytecode::MatchFail => todo!(),
+        Bytecode::Jump { index } => *self.ip.borrow_mut() = *index,
+        Bytecode::MatchFail => panic!("Match failure"),
       }
     }
   }
@@ -400,18 +384,12 @@ mod test {
   #[test]
   fn test_compile() {
     let src = r#"
-let x = {1, "what"} in
-let res =
-  case x of
-    {1, 1} -> 42;
-    {1, x} -> x;
-    "oi" -> "tchau";
-    _ -> 69
-  end
-in
-case res of
-  "what" -> 1;
-  _ -> 0
+let x = {1, 99} in
+case x of
+  {1, 1} -> 42;
+  {1, x} -> x;
+  "oi"   -> "tchau";
+  _      -> 69
 end
 "#;
     let mut parser = Parser::new(Lexer::new(src));
