@@ -57,6 +57,19 @@ impl<'input> Parser<'input> {
         self.expect(TokenKind::RParens)?;
         Ok(expr)
       }
+      TokenKind::LBracket => {
+        self.expect(TokenKind::LBracket)?;
+        let mut elements = vec![];
+        while !self.is(TokenKind::RBracket) {
+          elements.push(self.expression()?);
+          if self.is(TokenKind::RBracket) {
+            break;
+          }
+          self.expect(TokenKind::Comma)?;
+        }
+        self.expect(TokenKind::RBracket)?;
+        Ok(Expression::List { elements })
+      }
       TokenKind::LBrace => {
         self.expect(TokenKind::LBrace)?;
         let mut elements = vec![];
@@ -242,6 +255,30 @@ impl<'input> Parser<'input> {
       TokenKind::String => self.expect(TokenKind::String).map(|token| Pattern::String {
         value: token.lexeme,
       }),
+      TokenKind::LBracket => {
+        self.expect(TokenKind::LBracket)?;
+        let mut elements = vec![];
+        let mut has_tail = false;
+        while !self.is(TokenKind::RBracket) {
+          elements.push(self.pattern()?);
+          if self.is(TokenKind::RBracket) {
+            break;
+          }
+          if self.is(TokenKind::Pipe) {
+            self.expect(TokenKind::Pipe)?;
+            has_tail = true;
+            break;
+          }
+          self.expect(TokenKind::Comma)?;
+        }
+        let tail = if has_tail {
+          Some(Box::new(self.pattern()?))
+        } else {
+          None
+        };
+        self.expect(TokenKind::RBracket)?;
+        Ok(Pattern::List { elements, tail })
+      }
       TokenKind::LBrace => {
         self.expect(TokenKind::LBrace)?;
         let mut elements = vec![];

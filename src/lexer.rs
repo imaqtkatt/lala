@@ -9,6 +9,8 @@ pub enum TokenKind {
   String,
   LParens,
   RParens,
+  LBracket,
+  RBracket,
   LBrace,
   RBrace,
   Plus,
@@ -17,6 +19,7 @@ pub enum TokenKind {
   Star,
   Equals,
   DoubleEquals,
+  Pipe,
   Fn,
   Let,
   In,
@@ -107,8 +110,11 @@ impl<'input> Lexer<'input> {
       match char {
         '(' => TokenKind::LParens,
         ')' => TokenKind::RParens,
+        '[' => TokenKind::LBracket,
+        ']' => TokenKind::RBracket,
         '{' => TokenKind::LBrace,
         '}' => TokenKind::RBrace,
+        '|' => TokenKind::Pipe,
         '+' => TokenKind::Plus,
         '-' => {
           if let Some(char) = self.peekable.peek() {

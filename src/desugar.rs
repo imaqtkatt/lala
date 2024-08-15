@@ -47,8 +47,13 @@ pub enum Expression {
   },
   Access {
     expr: Expr,
-    idx: usize,
+    idx: Acc,
   },
+  Cons {
+    hd: Expr,
+    tl: Expr,
+  },
+  Nil,
 }
 
 #[derive(Clone, Debug)]
@@ -64,10 +69,19 @@ pub enum Cond {
   String(String),
   Atom(String),
   Tuple(usize),
+  Cons,
+  Nil,
 }
 
 #[derive(Clone, Debug)]
-pub struct Occurrence(pub Expression, pub Vec<usize>);
+pub enum Acc {
+  Tup(usize),
+  Head,
+  Tail,
+}
+
+#[derive(Clone, Debug)]
+pub struct Occurrence(pub Expression, pub Vec<Acc>);
 
 impl Occurrence {
   pub fn to_expression(self) -> Expression {
@@ -117,6 +131,15 @@ pub enum Pattern {
   Tuple {
     elements: Vec<Pattern>,
   },
+  Cons {
+    hd: Box<Pattern>,
+    tl: Box<Pattern>,
+  },
+  Nil,
+  // List {
+  //   elements: Vec<Pattern>,
+  //   tail: Option<Box<Pattern>>,
+  // },
 }
 
 #[derive(Clone, Debug)]

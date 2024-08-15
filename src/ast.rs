@@ -38,6 +38,9 @@ pub enum Expression {
     then_branch: Expr,
     else_branch: Expr,
   },
+  List {
+    elements: Vec<Expression>,
+  },
 }
 
 #[derive(Debug)]
@@ -54,7 +57,6 @@ pub struct Arm {
   pub lhs: Vec<Pattern>,
   pub rhs: Expr,
 }
-
 #[derive(Debug, Default)]
 pub enum Pattern {
   #[default]
@@ -73,6 +75,10 @@ pub enum Pattern {
   },
   Tuple {
     elements: Vec<Pattern>,
+  },
+  List {
+    elements: Vec<Pattern>,
+    tail: Option<Box<Pattern>>,
   },
 }
 

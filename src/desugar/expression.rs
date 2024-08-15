@@ -52,6 +52,15 @@ impl Desugar for ast::Expression {
         then_branch: then_branch.desugar()?.into(),
         else_branch: else_branch.desugar()?.into(),
       }),
+      ast::Expression::List { elements } => Ok(
+        elements
+          .into_iter()
+          .flat_map(|e| e.desugar())
+          .rfold(Expression::Nil, |acc, nxt| Expression::Cons {
+            hd: Box::new(nxt),
+            tl: Box::new(acc),
+          }),
+      ),
     }
   }
 }

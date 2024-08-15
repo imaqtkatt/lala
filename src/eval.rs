@@ -77,11 +77,12 @@ impl Env {
       },
       Desugar::Access { expr, idx } => match self.eval(*expr)? {
         Value::Tuple(elements) => {
-          if let Some(item) = elements.get(idx).cloned() {
-            Ok(item)
-          } else {
-            Err(format!("Index {} out of bounds", idx))
-          }
+          todo!()
+          // if let Some(item) = elements.get(idx).cloned() {
+          //   Ok(item)
+          // } else {
+          //   Err(format!("Index {} out of bounds", idx))
+          // }
         }
         _ => Err(format!("Accessing not tuple element")),
       },
@@ -93,6 +94,8 @@ impl Env {
         Value::Atom(ref value) if value == "true" => self.eval(*then_branch),
         _ => self.eval(*else_branch),
       },
+      Desugar::Cons { hd: _, tl: _ } => todo!(),
+      Desugar::Nil => todo!(),
     }
   }
 }

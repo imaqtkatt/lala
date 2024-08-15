@@ -18,6 +18,13 @@ impl ast::Pattern {
       ast::Pattern::Tuple { elements } => Pattern::Tuple {
         elements: elements.into_iter().map(|e| e.desugar()).collect(),
       },
+      ast::Pattern::List { elements, tail } => {
+        let acc = tail.map(|p| p.desugar()).unwrap_or(Pattern::Nil);
+        elements.into_iter().rfold(acc, |acc, nxt| Pattern::Cons {
+          hd: Box::new(nxt.desugar()),
+          tl: Box::new(acc),
+        })
+      }
     }
   }
 }
@@ -29,10 +36,15 @@ impl Pattern {
         Pattern::Variable { name } => binders.push((name.clone(), occ)),
         Pattern::Tuple { elements } => {
           for (i, e) in elements.iter().enumerate() {
-            bind(e, occ.with_index(i), binders);
+            bind(e, occ.with_index(crate::desugar::Acc::Tup(i)), binders);
           }
         }
+        Pattern::Cons { hd, tl } => {
+          bind(hd, occ.with_index(crate::desugar::Acc::Head), binders);
+          bind(tl, occ.with_index(crate::desugar::Acc::Tail), binders);
+        }
         Pattern::Wildcard
+        | Pattern::Nil
         | Pattern::Number { .. }
         | Pattern::String { .. }
         | Pattern::Atom { .. } => (),
@@ -47,7 +59,7 @@ impl Pattern {
 pub type Matrix = Vec<Row>;
 
 impl Occurrence {
-  pub fn with_index(&self, idx: usize) -> Self {
+  pub fn with_index(&self, idx: super::Acc) -> Self {
     let mut indexes = self.1.clone();
     indexes.push(idx);
     Self(self.0.clone(), indexes)
@@ -61,12 +73,19 @@ pub struct Case {
 }
 
 impl Case {
-  fn derive(occurrence: &Occurrence, pattern: Pattern, idx: usize) -> Self {
+  fn derive(occurrence: &Occurrence, pattern: Pattern, idx: super::Acc) -> Self {
     Self {
       occurrence: occurrence.with_index(idx),
       pattern,
     }
   }
+
+  // fn derive_noidx(occurrence: &Occurrence, pattern: Pattern) -> Self {
+  //   Self {
+  //     occurrence: occurrence.clone(),
+  //     pattern,
+  //   }
+  // }
 
   fn wildcard(occurrence: &Occurrence) -> Self {
     Self {
@@ -83,9 +102,20 @@ impl Case {
       (Pattern::Tuple { elements: a }, Cond::Tuple(b)) if a.len() == b => Some(
         a.into_iter()
           .enumerate()
-          .map(|(idx, pat)| Self::derive(&self.occurrence, pat, idx))
+          .map(|(idx, pat)| Self::derive(&self.occurrence, pat, super::Acc::Tup(idx)))
           .collect(),
       ),
+      (Pattern::Cons { hd, tl }, Cond::Cons) => {
+        let mut deque = VecDeque::new();
+        deque.push_back(Self::derive(&self.occurrence, *hd, super::Acc::Head));
+        deque.push_back(Self::derive(&self.occurrence, *tl, super::Acc::Tail));
+        Some(deque)
+      }
+      (Pattern::Nil, Cond::Nil) => Some(VecDeque::new()),
+      (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Cons) => {
+        Some((0..2).map(|_| Case::wildcard(&self.occurrence)).collect())
+      }
+      (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Nil) => Some(VecDeque::new()),
       (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Number(_)) => Some(VecDeque::new()),
       (Pattern::Variable { .. } | Pattern::Wildcard, Cond::Atom(_)) => Some(VecDeque::new()),
       (Pattern::Variable { .. } | Pattern::Wildcard, Cond::String(_)) => Some(VecDeque::new()),
@@ -110,6 +140,8 @@ impl Case {
       Pattern::Tuple { elements: pats } => Some(Cond::Tuple(pats.len())),
       Pattern::Atom { value } => Some(Cond::Atom(value.clone())),
       Pattern::String { value } => Some(Cond::String(value.clone())),
+      Pattern::Cons { .. } => Some(Cond::Cons),
+      Pattern::Nil => Some(Cond::Nil),
     }
   }
 }

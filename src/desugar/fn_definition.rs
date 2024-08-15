@@ -1,6 +1,6 @@
 use crate::{
   ast::{self},
-  desugar::{self, pattern, Expression, Pattern},
+  desugar::{pattern, Expression, Pattern},
 };
 
 use super::{Desugar, FnDefinition};

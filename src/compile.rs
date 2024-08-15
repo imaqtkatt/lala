@@ -29,16 +29,25 @@ pub enum Bytecode {
     /// Branch to next or default case.
     branch: usize,
   },
+  TestCons {
+    branch: usize,
+  },
+  TestNil {
+    branch: usize,
+  },
   MakeTuple {
     size: usize,
   },
   GetTuple {
     index: usize,
   },
+  GetHd,
+  GetTl,
   Jump {
     index: usize,
   },
   MatchFail,
+  Undefined,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,12 +131,23 @@ impl Ctx {
   fn compile_occ(&mut self, occurrence: Occurrence) {
     self.compile_expr(occurrence.0);
     for idx in occurrence.1.to_vec() {
-      self.push(Bytecode::GetTuple { index: idx });
+      match idx {
+        desugar::Acc::Tup(idx) => _ = self.push(Bytecode::GetTuple { index: idx }),
+        desugar::Acc::Head => _ = self.push(Bytecode::GetHd),
+        desugar::Acc::Tail => _ = self.push(Bytecode::GetTl),
+      }
+      // self.push(Bytecode::GetTuple { index: idx });
     }
   }
 
   pub fn compile_cond(&mut self, cond: Cond) -> usize {
     match cond {
+      Cond::Cons => self.push(Bytecode::TestCons {
+        branch: TEMP_BRANCH,
+      }),
+      Cond::Nil => self.push(Bytecode::TestNil {
+        branch: TEMP_BRANCH,
+      }),
       Cond::Number(n) => {
         let id = self.make_constant(Constant::Number(n));
         self.push(Bytecode::TestExact {
@@ -167,6 +187,7 @@ impl Ctx {
         self.push(Bytecode::MatchFail);
       }
       desugar::Tree::Leaf(index) => {
+        // TODO: don't repeat this compilation
         self.compile_expr(actions[index].clone());
         let idx = self.push(Bytecode::Jump { index: TEMP_BRANCH });
         jumps.push(idx);
@@ -180,7 +201,10 @@ impl Ctx {
           if let Some(_) = branches.peek() {
             let len = self.bytecode.len();
             match &mut self.bytecode[cond_location] {
-              Bytecode::TestExact { branch, .. } | Bytecode::TestTuple { branch, .. } => {
+              Bytecode::TestExact { branch, .. }
+              | Bytecode::TestTuple { branch, .. }
+              | Bytecode::TestCons { branch }
+              | Bytecode::TestNil { branch } => {
                 *branch = len;
               }
               _ => unreachable!(),
@@ -189,7 +213,10 @@ impl Ctx {
             let len = self.bytecode.len();
             self.compile_case_tree(*default.clone(), actions.clone(), jumps);
             match &mut self.bytecode[cond_location] {
-              Bytecode::TestExact { branch, .. } | Bytecode::TestTuple { branch, .. } => {
+              Bytecode::TestExact { branch, .. }
+              | Bytecode::TestTuple { branch, .. }
+              | Bytecode::TestCons { branch }
+              | Bytecode::TestNil { branch } => {
                 *branch = len;
               }
               _ => unreachable!(),
@@ -271,8 +298,14 @@ impl Ctx {
       }
       Expression::Access { expr, idx } => {
         self.compile_expr(*expr);
-        self.push(Bytecode::GetTuple { index: idx });
+        match idx {
+          desugar::Acc::Tup(idx) => _ = self.push(Bytecode::GetTuple { index: idx }),
+          desugar::Acc::Head => _ = self.push(Bytecode::GetHd),
+          desugar::Acc::Tail => _ = self.push(Bytecode::GetTl),
+        }
       }
+      Expression::Cons { hd: _, tl: _ } => _ = self.push(Bytecode::Undefined),
+      Expression::Nil => _ = self.push(Bytecode::Undefined),
     }
   }
 }
@@ -348,6 +381,8 @@ impl<'a> Machine<'a> {
           (Value::Tuple(x), y) if x.len() == y => {}
           _ => *self.ip.borrow_mut() = *branch,
         },
+        Bytecode::TestCons { branch } => todo!(),
+        Bytecode::TestNil { branch } => todo!(),
         Bytecode::MakeTuple { size } => {
           let mut s = Vec::with_capacity(*size);
           for _ in 0..*size {
@@ -363,6 +398,9 @@ impl<'a> Machine<'a> {
         }
         Bytecode::Jump { index } => *self.ip.borrow_mut() = *index,
         Bytecode::MatchFail => panic!("Match failure"),
+        Bytecode::GetHd => todo!(),
+        Bytecode::GetTl => todo!(),
+        Bytecode::Undefined => todo!(),
       }
     }
   }
@@ -383,30 +421,37 @@ mod test {
 
   #[test]
   fn test_compile() {
+    //     let src = r#"
+    // let x = {1, 99} in
+    // case x of
+    //   {1, 1} -> 42;
+    //   {1, x} -> x;
+    //   "oi"   -> "tchau";
+    //   _      -> 69
+    // end
+    // "#;
     let src = r#"
-let x = {1, 99} in
-case x of
-  {1, 1} -> 42;
-  {1, x} -> x;
-  "oi"   -> "tchau";
-  _      -> 69
+case [1, 2] of
+  [2, 3] -> 4;
+  _ -> 0
 end
 "#;
     let mut parser = Parser::new(Lexer::new(src));
     let expr = parser.expression().unwrap();
     let expr = expr.desugar().unwrap();
+    // println!("{expr:?}");
     let mut ctx = Ctx::new();
     ctx.fn_clause(expr);
 
     let info = ctx.bytecode();
 
-    // for (idx, b) in info.bytecode.iter().enumerate() {
-    //   println!("{idx}: {b:?}");
-    // }
-    // for (c, id) in info.constants.iter() {
-    //   println!("{c:?}: {id}");
-    // }
-    // println!("locals = {}", info.locals);
+    for (idx, b) in info.bytecode.iter().enumerate() {
+      println!("{idx}: {b:?}");
+    }
+    for (c, id) in info.constants.iter() {
+      println!("{c:?}: {id}");
+    }
+    println!("locals = {}", info.locals);
 
     let mut machine = Machine::new(&info);
     let mut stack = vec![];
