@@ -47,6 +47,8 @@ pub enum Bytecode {
     index: usize,
   },
   MatchFail,
+  PutList,
+  Nil,
   Undefined,
 }
 
@@ -304,8 +306,13 @@ impl Ctx {
           desugar::Acc::Tail => _ = self.push(Bytecode::GetTl),
         }
       }
-      Expression::Cons { hd: _, tl: _ } => _ = self.push(Bytecode::Undefined),
-      Expression::Nil => _ = self.push(Bytecode::Undefined),
+      Expression::Cons { hd, tl } => {
+        self.compile_expr(*hd);
+        self.compile_expr(*tl);
+        self.push(Bytecode::PutList);
+      }
+      Expression::Nil => _ = self.push(Bytecode::Nil),
+      // Expression::Nil => _ = self.push(Bytecode::Undefined),
     }
   }
 }
@@ -316,6 +323,8 @@ pub enum Value {
   Tuple(Vec<Value>),
   Atom(String),
   String(String),
+  ConsList(Box<Value>, Box<Value>),
+  NilList,
 }
 
 impl Default for Value {
@@ -381,8 +390,14 @@ impl<'a> Machine<'a> {
           (Value::Tuple(x), y) if x.len() == y => {}
           _ => *self.ip.borrow_mut() = *branch,
         },
-        Bytecode::TestCons { branch } => todo!(),
-        Bytecode::TestNil { branch } => todo!(),
+        Bytecode::TestCons { branch } => match stack.pop().unwrap() {
+          Value::ConsList(..) => {}
+          _ => *self.ip.borrow_mut() = *branch,
+        },
+        Bytecode::TestNil { branch } => match stack.pop().unwrap() {
+          Value::NilList => {}
+          _ => *self.ip.borrow_mut() = *branch,
+        },
         Bytecode::MakeTuple { size } => {
           let mut s = Vec::with_capacity(*size);
           for _ in 0..*size {
@@ -398,8 +413,26 @@ impl<'a> Machine<'a> {
         }
         Bytecode::Jump { index } => *self.ip.borrow_mut() = *index,
         Bytecode::MatchFail => panic!("Match failure"),
-        Bytecode::GetHd => todo!(),
-        Bytecode::GetTl => todo!(),
+        Bytecode::GetHd => {
+          let Value::ConsList(hd, _) = stack.pop().unwrap() else {
+            unreachable!()
+          };
+          stack.push(*hd);
+        }
+        Bytecode::GetTl => {
+          let Value::ConsList(_, tl) = stack.pop().unwrap() else {
+            unreachable!()
+          };
+          stack.push(*tl);
+        }
+        Bytecode::PutList => {
+          let tl = stack.pop().unwrap();
+          let hd = stack.pop().unwrap();
+          stack.push(Value::ConsList(Box::new(hd), Box::new(tl)));
+        }
+        Bytecode::Nil => {
+          stack.push(Value::NilList);
+        }
         Bytecode::Undefined => todo!(),
       }
     }
@@ -431,8 +464,8 @@ mod test {
     // end
     // "#;
     let src = r#"
-case [1, 2] of
-  [2, 3] -> 4;
+case [1, 2, 3] of
+  [1 | x] -> x;
   _ -> 0
 end
 "#;
